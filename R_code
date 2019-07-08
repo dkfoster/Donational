@@ -1,0 +1,98 @@
+install.packages("devtools")
+devtools::install_github("OakleyJ/SHELF")
+install.packages("readxl")
+library(readxl)
+library(SHELF)
+
+nSamples <- 2000
+
+judgements <- read_xlsx("Team Inputs.xlsx")
+judgements$fitted5th <-  NA
+judgements$fitted50th <-  NA
+judgements$fitted95th <-  NA
+
+parameterSamples <- matrix(0, nrow = nSamples, ncol = nrow(judgements))
+colnames(parameterSamples) <- paste0(judgements$Parameter, judgements$"Team member")
+
+for(i in 1:nrow(judgements)){  
+  lowerLimit <- as.numeric(judgements[i, "Lower plausible limit (L)"])
+  myfit <- 
+    fitdist(vals = as.numeric(judgements[i, c("5th percentile (pc5)",
+                                              "50th percentile (M)",
+                                              "95th percentile (pc95)")]),
+            probs = c(0.05, 0.5, 0.95),
+            lower = as.numeric(judgements[i, "Lower plausible limit (L)"]),
+            upper = as.numeric(judgements[i, "Upper plausible limit (U)"])
+    )
+  if(judgements[i, "Unit"] == "Proportion" | 
+     judgements[i, "Unit"] == "Probability" |
+     judgements[i, "Unit"] == "# <1"){
+    
+    betaRange <- as.numeric(judgements[i, "Upper plausible limit (U)"]) -
+      as.numeric(judgements[i, "Lower plausible limit (L)"])
+    
+    judgements[i, "Distribution"] <- "Beta"
+    judgements[i, c("Parameter 1",
+                    "Parameter 2")] <- myfit$Beta[1, ]
+    judgements[i, c("fitted5th",
+                    "fitted50th",
+                    "fitted95th")] <- 
+       lowerLimit + betaRange* qbeta(c(0.05, 0.5, 0.95),
+            judgements[[i, "Parameter 1"]],
+            judgements[[i, "Parameter 2"]])
+  parameterSamples[, i] <- sampleFit(myfit, n = nSamples)[, "beta"]
+  }
+  
+  if(judgements[i, "Unit"] == "Positive #" | 
+     judgements[i, "Unit"] == "Positive $" |
+     judgements[i, "Unit"] == "# >1"){
+    if(myfit$ssq["gamma"] < myfit$ssq["lognormal"]){
+      judgements[i, "Distribution"] <- "Gamma"
+      judgements[i, c("Parameter 1",
+                      "Parameter 2")] <- 
+        myfit$Gamma[1, ]
+      judgements[i, c("fitted5th",
+                      "fitted50th",
+                      "fitted95th")] <- 
+        lowerLimit + qgamma(c(0.05, 0.5, 0.95),
+               judgements[[i, "Parameter 1"]],
+               judgements[[i, "Parameter 2"]])
+      parameterSamples[, i] <- sampleFit(myfit, n = nSamples)[, "gamma"]
+                
+    }else{
+      judgements[i, "Distribution"] <- "Lognormal"
+      judgements[i, c("Parameter 1",
+                      "Parameter 2")] <- myfit$Log.normal[1, ]
+      judgements[i, c("fitted5th",
+                      "fitted50th",
+                      "fitted95th")] <- 
+        lowerLimit + qlnorm(c(0.05, 0.5, 0.95),
+               judgements[[i, "Parameter 1"]],
+               judgements[[i, "Parameter 2"]])
+      parameterSamples[, i] <- sampleFit(myfit,
+                                         n = nSamples)[, "lognormal"]
+      }
+  }
+  
+  if(judgements[i, "Unit"] == "#"){
+    reducedfit <- 
+      fitdist(vals = as.numeric(judgements[i,
+                                           c("5th percentile (pc5)",
+                                             "95th percentile (pc95)")]),
+              probs = c(0.05, 0.95))
+    judgements[i, "Distribution"] <- "Normal"
+    judgements[i, c("Parameter 1",
+                    "Parameter 2")] <- reducedfit$Normal[1, ]
+    judgements[i, c("fitted5th",
+                    "fitted50th",
+                    "fitted95th")] <- 
+      qnorm(c(0.05, 0.5, 0.95),
+            judgements[[i, "Parameter 1"]],
+            judgements[[i, "Parameter 2"]])
+    parameterSamples[, i] <- sampleFit(myfit, n = nSamples)[, "normal"]
+  }
+  }
+
+write.csv(judgements, "fitted.csv", row.names = FALSE)
+write.csv(parameterSamples,
+          "samples.csv", row.names = FALSE)
